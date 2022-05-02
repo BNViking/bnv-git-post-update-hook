@@ -1,5 +1,45 @@
 #include "BnvHelper.h"
 
+void BnvHelper::consolePrintInfo()
+{
+    list<string> info = {
+    "***********************************************************************************************",
+    "** BNV GIT HOOK                                                                              **",
+    "** Hook for post-update                                                                      **",
+    "** Automatically creates a project and switches to a new branch                              **",
+    "** If the project was created then updates it if there were changes in the branch            **",
+    "** If Pattern and the -d option are not specified, then the folder name = name of the branch **",
+    "** Deletes the project when a branch is deleted                                              **",
+    "***********************************************************************************************",
+    " ",
+    "Option:",
+    "-b             - name of the branch",
+    "-d             - folder name",
+    "-i             - create new config.ini",
+    "-v             - prit version",
+    "--git-hook     - mode of operation for Git hook",
+    "--debug        - output of debug information",
+    "-h             - help",
+    };
+
+    BnvHelper::consolePrint(info,"");
+
+}
+
+void BnvHelper::consolePrint(map<string,string> mapText, string title = string(""))
+{
+    string preStr = "";
+
+    if (title != "") {
+        preStr = "    ";
+        cout << title << endl;
+    }
+
+    for (auto iter : mapText) {
+        cout << preStr << iter.first << " = " << iter.second << endl;
+    }
+}
+
 void BnvHelper::consolePrint(list<string> text, string title = string(""))
 {
     string preStr = "";
@@ -9,8 +49,8 @@ void BnvHelper::consolePrint(list<string> text, string title = string(""))
         cout << title << endl;
     }
     
-    for (string n : text) {
-        cout << preStr << n << endl;
+    for (string text : text) {
+        cout << preStr << text << endl;
     }
 }
 
@@ -24,7 +64,7 @@ void BnvHelper::consolePrint(string text)
     cout << text << endl;
 }
 
-void BnvHelper::createConfigFile()
+void BnvHelper::createConfigFile(string path)
 {
     string pathToProject = "";
     string pathToStand = "";
@@ -47,35 +87,65 @@ void BnvHelper::createConfigFile()
     cin >> excludeBranches;
     cout << endl;
 
+    string congigPath = path + "/config.ini";
+
     FILE* ini;
-    if ((ini = fopen("./config.ini", "w")) == NULL) {
+    if ((ini = fopen(congigPath.c_str(), "w")) == NULL) {
         cout << "Error creating config.ini file" << endl;
     }
     else {
         fprintf(ini,
-            "################\n"
-            "# BNV GIT HOOK #\n"
-            "################\n"
+            "#\n"
+            "# %s \n"
+            "#\n"
             "\n"
             "[Main]\n"
-            "\n"
-            ";Path to the project \n"
+            "#Path to the project \n"
             "PathToProject = %s \n"
             "\n"
-            ";Path where new projects will be created \n"
+            "#Path where new projects will be created \n"
             "PathToStand = %s \n"
             "\n"
-            ";Regular expression to find folder name for new project \n"
+            "#Regular expression to find folder name for new project \n"
             "Pattern = %s \n"
             "\n"
-            ";Branches that will not be tracked \n"
+            "#Branches that will not be tracked \n"
             "ExcludeBranches = %s \n"
             "\n"
-            "\n", pathToProject.c_str(), pathToStand.c_str(), pattern.c_str(), excludeBranches.c_str());
+            "\n"
+            "[Messages]\n"
+            "#Aliase text: \n"
+            "#   @app - replace to app name \n"
+            "#   @version - replace to app version \n"
+            "#   @dir - replace to folder name for new project \n"
+            "#   @branch - branch name \n"
+            "#   @pathTo - path to a new project \n"
+            "#   @pathFrom - path to the main project \n"
+            "\n"
+            ";TextAfterCreateStand = \n"
+            ";TextAfterUpdateStand = \n"
+            ";TextAfterDeleteStand = \n"
+            "\n"
+            "\n"
+            "[CommandsAfterCreate]\n"
+            "#Commands to be executed after the script ends\n"
+            "#Commands will be taken from the Command-N parameter, where N is the sequence number of the command\n"
+            "#Aliase text: \n"
+            "#   @app - replace to app name \n"
+            "#   @version - replace to app version \n"
+            "#   @dir - replace to folder name for new project \n"
+            "#   @branch - branch name \n"
+            "#   @pathTo - path to a new project \n"
+            "#   @pathFrom - path to the main project \n"
+            "\n"
+            ";Command-1 = \n"
+            "\n"
+            "\n", 
+            BnvHelper::getAppFullName().c_str(), pathToProject.c_str(), pathToStand.c_str(), pattern.c_str(), excludeBranches.c_str());
         fclose(ini);
     }
 
-    cout << "config.ini created" << endl;
+    cout << congigPath << " created" << endl;
 }
 
 void BnvHelper::createDir(string path)
@@ -96,6 +166,21 @@ void BnvHelper::copyDirTo(string pathIn, string pathTo)
     fs::copy(pathIn, pathTo, copyOptions);
 }
 
+string BnvHelper::getAppName()
+{
+    return string("BNV GIT HOOK");
+}
+
+string BnvHelper::getAppVersion()
+{
+    return string("1.1.0");
+}
+
+string BnvHelper::getAppFullName()
+{
+    return string(BnvHelper::getAppName() + " [v"+ BnvHelper::getAppVersion() + "]");
+}
+
 string BnvHelper::getCurDir()
 {
     return fs::current_path();
@@ -112,7 +197,14 @@ string BnvHelper::sendTrueFalse(bool value)
 
 string BnvHelper::sendCommand(string cmd)
 {
+    return BnvHelper::sendCommand(cmd, false);
+}
 
+string BnvHelper::sendCommand(string cmd, bool printCmd = false)
+{
+    if (printCmd) {
+        BnvHelper::consolePrint("exec: " + cmd);
+    }
     FILE* fp;
 
     int status;
@@ -131,6 +223,28 @@ string BnvHelper::sendCommand(string cmd)
     status = pclose(fp);
     if (status == -1) {
         return "error";
+    }
+
+    if (printCmd) {
+        BnvHelper::consolePrint(result + "\n");
+    }
+
+    return result;
+}
+
+string BnvHelper::sendCommand(list<string> listCmd)
+{
+    return BnvHelper::sendCommand(listCmd, false);
+}
+
+string BnvHelper::sendCommand(list<string> listCmd, bool printCmd = false)
+{
+    string result = "";
+
+    for (string cmd : listCmd) {
+        if (auto s = BnvHelper::sendCommand(cmd, printCmd) != "") {
+            result = s + "\n";
+        }
     }
 
     return result;
@@ -167,6 +281,20 @@ string& BnvHelper::rtrim(std::string& str, const std::string& chars = "\t\n\v\f\
 string& BnvHelper::trim(std::string& str, const std::string& chars = "\t\n\v\f\r ")
 {
     return BnvHelper::ltrim(BnvHelper::rtrim(str, chars), chars);
+}
+
+string& BnvHelper::strReplace(const string& search, const string& replace, string& subject)
+{
+    size_t pos = 0;
+    int n = 0;
+
+    while ((pos = subject.find(search)) != string::npos && n <= 100)
+    {
+        subject.replace(pos, search.size(), replace);
+        n++;
+    }
+
+    return subject;
 }
 
 list<string> BnvHelper::stringToList(string str, string delimiter)

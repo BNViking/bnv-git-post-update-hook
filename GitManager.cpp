@@ -5,10 +5,11 @@ using namespace std;
 void GitManager::setVGit()
 {
     string result = "";
-    string comRes = BnvHelper::sendCommand("git --version");
+    string cmdRes = BnvHelper::sendCommand("git --version");
 
-    if (comRes.find("git version") != string::npos) {
-        result = comRes.substr(comRes.find_last_of("git version") + 1);
+    if (cmdRes.find("git version") != string::npos) {
+        result = cmdRes.substr(cmdRes.find_last_of("git version") + 1);
+        BnvHelper::trim(result, "\t\n\v\f\r ");
     }
     this->vGit = result;
 }
@@ -25,6 +26,22 @@ void GitManager::initConfig()
         this->pathToStand = config.Get("Main", "PathToStand", "");
         this->pattern = config.Get("Main", "Pattern", "");
         this->excludeBranches = config.Get("Main", "ExcludeBranches", "");
+        this->messages["TextAfterCreateStand"] = config.GetString("Messages","TextAfterCreateStand","");
+        this->messages["TextAfterUpdateStand"] = config.GetString("Messages","TextAfterUpdateStand","");
+        this->messages["TextAfterDeleteStand"] = config.GetString("Messages","TextAfterDeleteStand","");
+
+        int n = 0;
+        while (true)
+        {
+            n++;
+            string pName = "Command-" + to_string(n);
+            if (config.HasValue("CommandsAfterCreate", pName)) {
+                this->commandsAfterCreate.push_back(config.GetString("CommandsAfterCreate", pName, ""));
+            } else {
+                break;
+            }
+        }
+
     }
 }
 
@@ -36,7 +53,7 @@ GitManager::GitManager(string branch,string dirName, string curDir, bool isGitHo
     this->isGitHook = isGitHook;
 
     if (this->isGitHook) {
-        BnvHelper::consolePrint("BNV-GIT-HOOK");
+        BnvHelper::consolePrint(BnvHelper::getAppFullName());
     }
 
     initConfig();
@@ -44,15 +61,16 @@ GitManager::GitManager(string branch,string dirName, string curDir, bool isGitHo
     setBranch(branch);
     serDirName(dirName);
 
-    string ss = BnvHelper::sendCommand("cd " + this->pathToProject + " && env -i git branch -l");
-    this->hasGitInProject = !(ss.find("fatal") != string::npos);
+    if (this->pathToProject != "") {
+        string ss = BnvHelper::sendCommand("cd " + this->pathToProject + " && env -i git branch -l");
+        this->hasGitInProject = !(ss.find("fatal") != string::npos);
+    }
 
     auto exBrList = BnvHelper::stringToList(this->excludeBranches, ",");
     if (!BnvHelper::hasElementInList(exBrList,this->branch) || !this->isGitHook) {
         validate();
-        setScenario();
-
         if (!hasError()) {
+            setScenario();
             run();
         }
     } else {
@@ -75,6 +93,9 @@ GitManager::GitManager(string branch,string dirName, string curDir, bool isGitHo
 
         BnvHelper::consolePrint(debugList, "Debug:");
         BnvHelper::consolePrint(exBrList, "ExcludeBranches:");
+        
+        BnvHelper::consolePrint(this->messages, "Messages with aliase:");
+        BnvHelper::consolePrint(this->commandsAfterCreate, "Commands After Create with aliase:");
 
     }
 }
@@ -193,10 +214,49 @@ string GitManager::getScenarioByString()
     return "";
 }
 
+string GitManager::getMessageByKey(string key)
+{
+    string result = "";
+
+    if (messages.find(key) != messages.end()) {
+        result = this->replaseAliaseText(messages[key]);
+    }
+
+    return result;
+}
+
+string GitManager::replaseAliaseText(string text)
+{
+    string result = "";
+    map<string, string> mapReplace = {
+        {"@app",BnvHelper::getAppName()},
+        {"@version", BnvHelper::getAppVersion()},
+        {"@branch", this->branch},
+        {"@dir", this->dirName},
+        {"@pathTo", string(this->pathToStand + "/" + this->dirName)},
+        {"@pathFrom", this->pathToProject},
+    };
+
+    for (auto& iter : mapReplace) {
+        result = BnvHelper::strReplace(iter.first, iter.second, text);
+    }
+
+    return result;
+}
+
 void GitManager::cloneProject()
 {
     BnvHelper::consolePrint("Clone project" + this->pathToProject);
     BnvHelper::sendCommand("git clone " + this->pathToProject + " " + this->pathToStand + "/" + this->dirName);
+}
+
+list<string> GitManager::getCommandsAfterCreate()
+{
+    list<string> result;
+    for (string cmd : this->commandsAfterCreate) {
+        result.push_back(this->replaseAliaseText(cmd));
+    }
+    return result;
 }
 
 void GitManager::copyProject()
@@ -233,9 +293,6 @@ bool GitManager::hasBranchProject()
 {
     string ss = BnvHelper::sendCommand("cd " + this->pathToProject + " && env -i git branch -l");
     bool result = (ss.find(this->branch) != string::npos) && this->branch != "";
-    if (this->isDebug) {
-        BnvHelper::consolePrint("Has branch " + this->branch + " in project = " + BnvHelper::sendTrueFalse(result));
-    }
     return result;
 }
 
@@ -245,9 +302,6 @@ bool GitManager::hasBranchStand()
     if (this->dirName != "" && BnvHelper::existDir(this->pathToStand + "/" + this->dirName)) {
         string ss = BnvHelper::sendCommand("cd " + this->pathToStand + "/" + this->dirName + " && env -i git branch -l");
         result = (ss.find(this->branch) != string::npos) && this->branch != "";
-        if (this->isDebug) {
-            BnvHelper::consolePrint("Has branch " + this->branch + " in stand = " + BnvHelper::sendTrueFalse(result));
-        }
     }
 
     return result;
@@ -255,6 +309,7 @@ bool GitManager::hasBranchStand()
 
 void GitManager::run()
 {
+
     switch (this->scenario) {
         case ScenarioSet::SCENARIO_NEW_STAND:
             if (BnvHelper::existDir(this->pathToStand + "/" + this->dirName)) {
@@ -264,15 +319,22 @@ void GitManager::run()
             this->cloneProject();
             this->copyProject();
             this->checkoutStandBranch();
+            if (!this->hasError()) {
+                BnvHelper::sendCommand(this->getCommandsAfterCreate(), true);
+            }
+            BnvHelper::consolePrint(this->getMessageByKey("TextAfterCreateStand"));
             break;
         case ScenarioSet::SCENARIO_UPDATE_STAND:
             this->updateStand();
+            BnvHelper::consolePrint(this->getMessageByKey("TextAfterUpdateStand"));
             break;
         case ScenarioSet::SCENARIO_DELETE_STAND:
             this->deleteDir(this->pathToStand + "/" + this->dirName);
+            BnvHelper::consolePrint(this->getMessageByKey("TextAfterDeleteStand"));
             break;
         default: {
             this->errors.push_front("Scenario not defined");
         }
     }
+
 }
